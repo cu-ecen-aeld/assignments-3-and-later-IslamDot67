@@ -1,3 +1,12 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 #include "systemcalls.h"
 
 /**
@@ -10,14 +19,42 @@
 bool do_system(const char *cmd)
 {
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
+    /*
+     * TODO  add your code here
+     *  Call the system() function with the command set in the cmd
+     *   and return a boolean true if the system() call completed with success
+     *   or false() if it returned a failure
+    */
+    bool result = false;
+    int status = system(cmd);
+    if (status == -1){
+        printf("System Error: %s (errno: %d)\n", strerror(errno), errno);
+        result = false;
+    }
+    else{
+        if (WIFEXITED(status)){
+            int exit_code = WEXITSTATUS(status);
 
-    return true;
+            if (exit_code == 127){
+                printf("Shell could not be executed in the child process. Exit Code: 127.\n");
+                result = false;
+            }
+            else if (exit_code == 0){
+                printf("Command succeeded (Exit code 0).\n");
+                result = true;
+            }
+            else{
+                printf("Command failed with code: %d.\n", exit_code);
+                result = false;
+            }
+        }
+        else if(WIFSIGNALED(status)){
+            printf("Command killed by signali: %d.\n", WTERMSIG(status)); 
+            result = false;
+        }
+    }
+
+    return result;
 }
 
 /**
@@ -58,10 +95,43 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    bool result = true;
+    pid_t pid = fork();
+    if (pid == -1){
+        printf("Failed forking child process. Error Code = %s, Errno = %d./n", strerror(errno), errno);
+        result = false;
+    }
+    else if (pid == 0){
+        // Child process. Execute command
+
+        int childStatus = execv(command[0], command);
+        if (childStatus == -1){
+            printf("Child failed to execute command: %s.'n", command[0]);
+            result = false;
+            fflush(stdout);
+            _exit(1);
+        }
+    }
+    else{
+      // Parent process
+      int waitStatus;
+      pid_t pid_ret = waitpid(pid, &waitStatus, WUNTRACED | WCONTINUED); 
+      if (pid_ret == pid){
+          if (WIFEXITED(waitStatus) && WEXITSTATUS(waitStatus) == 0){
+              result = true;
+          }
+          else{
+              result = false;
+          }
+      }
+      else{
+          result = false;
+      }
+    }
 
     va_end(args);
 
-    return true;
+    return result;
 }
 
 /**
@@ -92,8 +162,40 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
-
+    bool result = true;
+    int fd = open(outputfile, O_WRONLY | O_TRUNC | O_CREAT);
+    if (fd < 0){
+        printf("Failed to open file: %s. Error Code = %s, Errno = %d./n", outputfile, strerror(errno), errno);
+        result = false;
+    }
+    else{
+        pid_t child_pid = fork();
+        if (child_pid == -1 ){
+            printf("Failed to Fork. Error Code = %s, Errno = %d./n", strerror(errno), errno);
+        }
+        else if (child_pid == 0){
+            dup2(fd, 1);
+            int childStatus = execv(command[0], command);
+            if (childStatus == -1){
+                printf("Child failed to execute command: %s.'n", command[0]);
+                result = false;
+                _exit(1);
+            }
+        }
+        else{
+            int waitStatus;
+            pid_t pid_ret = waitpid(child_pid, &waitStatus, WUNTRACED | WCONTINUED); 
+            if (pid_ret == child_pid){
+                result = true;
+            }
+            else{
+                result = false;
+            }
+        }
+    }
+    
+    close(fd);
     va_end(args);
 
-    return true;
+    return result;
 }
